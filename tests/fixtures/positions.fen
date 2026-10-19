@@ -1,0 +1,6 @@
+# An unlabeled position.
+
+rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1
+
+# A labeled position with en passant available.
+4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1 | e5d6
