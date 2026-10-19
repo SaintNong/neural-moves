@@ -22,6 +22,9 @@ cmake --build build/release --parallel
 # Build and run the full dataset at depth 4
 cmake --build build/release --target run
 
+# Search the 100-position sample at depth 7
+./build/release/neural-move-ordering positions/quiet-100.fen --depth 7
+
 # Compare selected strategies on a smaller sample
 ./build/release/neural-move-ordering positions/quiet-labeled-5000.fen --depth 4 --limit 100 --strategy captures --strategy capture-hist
 
@@ -53,8 +56,8 @@ Save the summary and detailed results as CSV:
 one row per position and strategy, including the FEN, best UCI move, optional
 input label, score in centipawns, depth, node counts, cutoffs, EBF, and time.
 Interactive runs show one progress bar for the full dataset, with elapsed and
-estimated total time. It writes to stderr and is hidden when stderr is
-redirected.
+estimated total time in `(MM:SSs / ~MM:SSs)` format. It writes to stderr and is
+hidden when stderr is redirected.
 
 ## Development
 

@@ -32,25 +32,25 @@ struct RunProgress::Impl {
 
         auto columns = indicators::terminal_width();
         if (columns == 0) columns = 80;
-        const auto count_width = position_text(total).size();
-        const auto fixed_width = std::string_view("Search ").size() + 2 + 5 + count_width + 1;
+        const auto prefix_width = prefix_text(total).size();
         constexpr std::size_t time_width = 21;
-        const bool show_times = columns >= fixed_width + time_width + 10;
+        const bool show_times = columns >= prefix_width + 2 + time_width + 10;
         show_time_estimate = show_times;
-        const auto reserved = fixed_width + (show_times ? time_width : 0) + 2;
+        const auto fixed_width = prefix_width + 2 + (show_times ? time_width + 1 : 0);
+        const auto reserved = fixed_width + 2;
         const auto bar_width = std::clamp(columns > reserved ? columns - reserved : std::size_t{8},
                                           std::size_t{8}, std::size_t{28});
 
         bar = std::make_unique<indicators::ProgressBar>(
             indicators::option::BarWidth{bar_width},
-            indicators::option::PrefixText{"Search "},
+            indicators::option::PrefixText{prefix_text(0)},
             indicators::option::Start{"["},
             indicators::option::Fill{"━"},
             indicators::option::Lead{"━"},
             indicators::option::Remainder{"─"},
             indicators::option::End{"]"},
             indicators::option::PostfixText{postfix_text(0)},
-            indicators::option::ShowPercentage{true},
+            indicators::option::ShowPercentage{false},
             indicators::option::FillColor{indicators::Color::cyan},
             indicators::option::LeadColor{indicators::Color::yellow},
             indicators::option::RemainderColor{indicators::Color::grey},
@@ -103,33 +103,33 @@ struct RunProgress::Impl {
         cursor_state_known = false;
     }
 
-    std::string position_text(std::uint64_t completed) const {
-        return " " + std::to_string(completed) + "/" + std::to_string(total);
+    std::string prefix_text(std::uint64_t completed) const {
+        std::ostringstream output;
+        output << "Searching position " << completed << " of " << total << ' ';
+        return output.str();
     }
 
     static std::string format_duration(std::chrono::seconds duration) {
         const auto seconds = (std::max)(duration.count(), std::chrono::seconds::rep{0});
-        const auto hours = seconds / 3600;
-        const auto minutes = (seconds / 60) % 60;
+        const auto minutes = seconds / 60;
         const auto remaining_seconds = seconds % 60;
 
         std::ostringstream output;
-        output << std::setfill('0') << std::setw(2) << hours << ':' << std::setw(2)
-               << minutes << ':' << std::setw(2) << remaining_seconds;
+        output << std::setfill('0') << std::setw(2) << minutes << ':' << std::setw(2)
+               << remaining_seconds << 's';
         return output.str();
     }
 
     std::string postfix_text(std::uint64_t completed) const {
-        auto text = position_text(completed);
-        if (!show_time_estimate) return text;
+        if (!show_time_estimate) return {};
 
         const auto elapsed = std::chrono::steady_clock::now() - started_at;
         const auto elapsed_seconds =
             std::chrono::duration_cast<std::chrono::seconds>(elapsed);
-        text += " " + format_duration(elapsed_seconds) + " / ~";
+        auto text = "(" + format_duration(elapsed_seconds) + " / ~";
 
         if (completed == 0 || total == 0) {
-            text += "--:--:--";
+            text += "--:--)";
             return text;
         }
 
@@ -141,7 +141,7 @@ struct RunProgress::Impl {
             (std::numeric_limits<std::chrono::seconds::rep>::max)());
         const auto bounded_seconds = (std::min)(estimated_seconds, max_seconds);
         text += format_duration(std::chrono::seconds{
-            static_cast<std::chrono::seconds::rep>(bounded_seconds)});
+            static_cast<std::chrono::seconds::rep>(bounded_seconds)}) + ')';
         return text;
     }
 
@@ -160,6 +160,7 @@ RunProgress::~RunProgress() = default;
 void RunProgress::update(std::uint64_t completed) {
     if (!impl_->bar) return;
     const auto progress = std::min(completed, impl_->total);
+    impl_->bar->set_option(indicators::option::PrefixText{impl_->prefix_text(progress)});
     impl_->bar->set_option(indicators::option::PostfixText{impl_->postfix_text(progress)});
     impl_->bar->set_progress(static_cast<std::size_t>(progress));
     if (progress == impl_->total) impl_->restore_cursor();
