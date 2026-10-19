@@ -47,8 +47,8 @@ struct SearchResult {
 
 // Alpha-beta search with material evaluation and optional quiescence search
 // (enabled by default). Adjudicates stalemate, insufficient material (see
-// is_insufficient_material), and the automatic 75-move rule. Checkmate takes
-// precedence. Repetition and optional 50-move claims are not adjudicated.
+// is_insufficient_material), and the 100-halfmove draw rule. Checkmate takes
+// precedence. Repetition is not adjudicated.
 // Instances hold mutable search state and must not be used concurrently.
 class AlphaBetaSearcher {
 public:

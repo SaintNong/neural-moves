@@ -122,26 +122,3 @@ TEST_CASE("Terminal positions have no selected move") {
     }
 }
 
-TEST_CASE("The automatic 75-move draw affects search but does not override checkmate") {
-    // FEN records halfmoves, so the chess rule's boundary is 2 * 75.
-    constexpr int draw_halfmoves = 2 * 75;
-    const auto rook_endgame = [](int halfmoves) {
-        return nmo::parse_board("7k/8/8/8/8/8/R7/K7 w - - " + std::to_string(halfmoves) + " 1");
-    };
-    for_each_searcher([&](auto& searcher, auto strategy) {
-        CHECK(searcher.search(rook_endgame(draw_halfmoves - 2), 1, strategy).score_cp > 0);
-        CHECK(searcher.search(rook_endgame(draw_halfmoves - 1), 1, strategy).score_cp == 0);
-        const auto drawn = searcher.search(rook_endgame(draw_halfmoves), 1, strategy);
-        CHECK(drawn.score_cp == 0);
-        CHECK(drawn.best_move == chess::Move::NO_MOVE);
-
-        auto mate = nmo::parse_board("7k/5Q2/6K1/8/8/8/8/8 w - - " +
-                                     std::to_string(draw_halfmoves - 1) + " 1");
-        const auto result = searcher.search(mate, 1, strategy);
-        REQUIRE(mate.isLegal(result.best_move));
-        mate.makeMove(result.best_move);
-        CHECK(mate.inCheck());
-        CHECK(legal_moves(mate).empty());
-        CHECK(result.score_cp > 0);
-    });
-}

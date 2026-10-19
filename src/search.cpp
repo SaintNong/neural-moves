@@ -6,6 +6,9 @@
 #include "nmo/evaluation.hpp"
 
 namespace nmo {
+namespace {
+constexpr int fifty_move_rule_halfmoves = 100;
+}  // namespace
 
 double SearchResult::ebf() const {
     return estimate_ebf(nodes, depth);
@@ -64,7 +67,7 @@ int AlphaBetaSearcher::negamax(chess::Board& board, int depth, int alpha, int be
         *root_best_move = chess::Move::NO_MOVE;
 
     // Non-stalemate draws
-    const bool drawn = board.halfMoveClock() >= 100 || is_insufficient_material(board);
+    const bool drawn = board.halfMoveClock() >= fifty_move_rule_halfmoves || is_insufficient_material(board);
     ++result_.nodes;
 
     //  50-move rule
@@ -146,7 +149,7 @@ int AlphaBetaSearcher::negamax(chess::Board& board, int depth, int alpha, int be
 
 int AlphaBetaSearcher::quiescence(chess::Board& board, int alpha, int beta, int ply, bool count_node) {
     if (count_node) ++result_.nodes;
-    if (board.halfMoveClock() >= 100 || is_insufficient_material(board))
+    if (board.halfMoveClock() >= fifty_move_rule_halfmoves || is_insufficient_material(board))
         return 0;
 
     chess::Movelist moves;
