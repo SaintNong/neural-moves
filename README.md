@@ -3,10 +3,10 @@
 [![CI](https://github.com/SaintNong/neural-moves/actions/workflows/ci.yml/badge.svg)](https://github.com/SaintNong/neural-moves/actions/workflows/ci.yml)
 
 A C++20 benchmark for comparing chess move ordering strategies using
-alpha–beta search, iterative deepening, and a transposition table. It uses
-[Disservin's chess library](https://disservin.github.io/chess-library/).
+alpha–beta search, iterative deepening, quiescence search, and a transposition
+table. It uses [Disservin's chess library](https://disservin.github.io/chess-library/).
 
-Available strategies: `captures` (MVV-LVA), `history`, `history-gravity`,
+Available strategies: `mvv-lva`, `history`, `history-gravity`,
 `capture-hist`, and `mvv-lva-history`. All five run by default.
 
 ## Build and run
@@ -21,6 +21,12 @@ cmake --build build/release --parallel
 # Search the starting position
 ./build/release/neural-move-ordering positions/start.fen --depth 4
 
+# Disable the quiescence search
+./build/release/neural-move-ordering positions/start.fen --depth 4 --no-quiescence
+
+# Disable transposition-table move ordering
+./build/release/neural-move-ordering positions/start.fen --depth 4 --no-hash-move-ordering
+
 # Build and run the full dataset at depth 4
 cmake --build build/release --target run
 
@@ -28,7 +34,7 @@ cmake --build build/release --target run
 ./build/release/neural-move-ordering positions/quiet-100.fen --depth 7
 
 # Compare selected strategies on a smaller sample
-./build/release/neural-move-ordering positions/quiet-labeled-5000.fen --depth 4 --limit 100 --strategy captures --strategy capture-hist
+./build/release/neural-move-ordering positions/quiet-labeled-5000.fen --depth 4 --limit 100 --strategy mvv-lva --strategy capture-hist
 
 # Show all options
 ./build/release/neural-move-ordering --help
@@ -57,6 +63,10 @@ Save the summary and detailed results as CSV:
 `summary.csv` contains one aggregate row per strategy. `results.csv` contains
 one row per position and strategy, including the FEN, best UCI move, optional
 input label, score in centipawns, depth, node counts, cutoffs, EBF, and time.
+Quiescence search is enabled by default; `--no-quiescence` restores material-only
+leaf evaluation at the requested depth. Transposition-table move ordering is
+also enabled by default; `--no-hash-move-ordering` disables only move
+prioritization from the table.
 Interactive runs show one progress bar for the full dataset, with elapsed and
 estimated total time in `(MM:SSs / ~MM:SSs)` format. It writes to stderr and is
 hidden when stderr is redirected.

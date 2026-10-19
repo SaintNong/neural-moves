@@ -15,6 +15,10 @@ struct SearchOptions {
     std::size_t table_megabytes = 16;
     // Search depths 1 through the requested depth, retaining TT/history between them.
     bool iterative_deepening = true;
+    // Extend depth-zero nodes with capture and promotion searches.
+    bool quiescence = true;
+    // Prioritize a transposition-table move during move ordering.
+    bool hash_move_ordering = true;
 };
 
 struct SearchResult {
@@ -30,7 +34,7 @@ struct SearchResult {
     std::uint64_t nodes = 0;  // All visits, including roots, leaves and TT hits.
     // Beta cutoffs while searching moves; excludes TT cutoffs.
     std::uint64_t cutoffs = 0;
-    // Probes with a matching entry whose cached move is legal at this node.
+    // Probes with a matching transposition-table entry.
     std::uint64_t tt_hits = 0;
     // TT hits that return a score without searching children.
     std::uint64_t tt_cutoffs = 0;
@@ -41,10 +45,10 @@ struct SearchResult {
     [[nodiscard]] double ebf() const;
 };
 
-// Fixed-horizon alpha-beta search with material-only leaf evaluation; no
-// quiescence search or extensions. Adjudicates stalemate, insufficient material
-// (see is_insufficient_material), and the automatic 75-move rule. Checkmate
-// takes precedence. Repetition and optional 50-move claims are not adjudicated.
+// Alpha-beta search with material evaluation and optional quiescence search
+// (enabled by default). Adjudicates stalemate, insufficient material (see
+// is_insufficient_material), and the 100-halfmove draw rule. Checkmate takes
+// precedence. Repetition is not adjudicated.
 // Instances hold mutable search state and must not be used concurrently.
 class AlphaBetaSearcher {
 public:
@@ -56,11 +60,13 @@ public:
     // std::logic_error because inference is unimplemented. Equally scoring
     // moves may yield different best moves under different ordering strategies.
     [[nodiscard]] SearchResult search(chess::Board board, int depth,
-                                      OrderingStrategy strategy = OrderingStrategy::captures);
+                                      OrderingStrategy strategy = OrderingStrategy::mvvlva);
     [[nodiscard]] std::size_t table_bytes() const noexcept { return table_.bytes(); }
 
 private:
-    int negamax(chess::Board& board, int depth, int alpha, int beta, int ply, chess::Move& best_move);
+    int negamax(chess::Board& board, int depth, int alpha, int beta, int ply,
+                chess::Move* root_best_move = nullptr);
+    int quiescence(chess::Board& board, int alpha, int beta, int ply, bool count_node = true);
 
     SearchOptions options_;
     TranspositionTable table_;

@@ -15,8 +15,21 @@ constexpr int capture_history_limit = 10692;
 constexpr int bonus_per_ply = 131;
 constexpr int additive_history_limit = 1'000'000'000;
 
+// MVV-LVA scores indexed by victim then attacker, in PieceType order:
+// pawn, knight, bishop, rook, queen, king, none.
+constexpr std::array<std::array<int, 7>, 7> mvv_lva_scores{{
+    {{15, 14, 13, 12, 11, 10, 0}},
+    {{25, 24, 23, 22, 21, 20, 0}},
+    {{35, 34, 33, 32, 31, 30, 0}},
+    {{45, 44, 43, 42, 41, 40, 0}},
+    {{55, 54, 53, 52, 51, 50, 0}},
+    {{0, 0, 0, 0, 0, 0, 0}},
+    {{0, 0, 0, 0, 0, 0, 0}},
+}};
+
 struct RankedMove {
     chess::Move move{chess::Move::NO_MOVE};
+    bool is_hash_move = false;
     int stage = 0;
     int score = 0;
     int index = 0;
@@ -25,7 +38,7 @@ struct RankedMove {
 
 std::string_view strategy_name(OrderingStrategy strategy) noexcept {
     switch (strategy) {
-        case OrderingStrategy::captures: return "captures";
+        case OrderingStrategy::mvvlva: return "mvv-lva";
         case OrderingStrategy::history: return "history";
         case OrderingStrategy::history_gravity: return "history-gravity";
         case OrderingStrategy::capture_hist: return "capture-hist";
@@ -47,12 +60,12 @@ OrderingStrategy parse_strategy(std::string_view name) {
     throw std::invalid_argument("unknown strategy: " + std::string(name));
 }
 
-int tactical_priority(const chess::Board& board, chess::Move move) noexcept {
+int tactical_priority(const chess::Board& board, chess::Move move, bool capture) noexcept {
     int score = 0;
-    if (board.isCapture(move)) {
+    if (capture) {
         const auto victim = static_cast<std::size_t>(static_cast<int>(board.getCapturing<chess::PieceType>(move)));
         const auto attacker = static_cast<std::size_t>(static_cast<int>(board.at<chess::PieceType>(move.from())));
-        score += 10'000 + 10 * piece_values[victim] - piece_values[attacker];
+        score += mvv_lva_scores[victim][attacker];
     }
     if (move.typeOf() == chess::Move::PROMOTION) {
         score += 20'000 + piece_values[static_cast<std::size_t>(static_cast<int>(move.promotionType()))];
@@ -84,7 +97,7 @@ std::size_t MoveOrderer::capture_key(const chess::Board& board, chess::Move move
                                      move.to().index()) * 6 + victim);
 }
 
-void MoveOrderer::order(const chess::Board& board, chess::Movelist& moves, chess::Move tt_move) const {
+void MoveOrderer::order(const chess::Board& board, chess::Movelist& moves, chess::Move hash_move) const {
     if (strategy_ == OrderingStrategy::neural) {
         NeuralPolicy{}.rank(board, moves);
     }
@@ -92,37 +105,48 @@ void MoveOrderer::order(const chess::Board& board, chess::Movelist& moves, chess
     for (int index = 0; index < moves.size(); ++index) {
         const auto move = moves[index];
         const bool promotion = move.typeOf() == chess::Move::PROMOTION;
-        const bool capture = board.isCapture(move);
         auto& rank = ranked[static_cast<std::size_t>(index)];
         rank.move = move;
+        rank.is_hash_move = move == hash_move;
         rank.index = index;
-        if (move == tt_move) {
-            rank.stage = 3;
-            continue;
-        }
         switch (strategy_) {
-            case OrderingStrategy::captures:
-                rank.score = tactical_priority(board, move);
+            case OrderingStrategy::mvvlva: {
+                const bool capture = board.isCapture(move);
+                rank.score = tactical_priority(board, move, capture);
                 break;
+            }
             case OrderingStrategy::history:
-            case OrderingStrategy::history_gravity:
+            case OrderingStrategy::history_gravity: {
+                const bool capture = !promotion && board.isCapture(move);
                 rank.stage = promotion || capture ? 1 : 0;
                 rank.score = rank.stage ? 0 : history_[quiet_key(board, move)];
                 break;
-            case OrderingStrategy::capture_hist:
-                rank.stage = promotion ? 2 : capture ? 1 : 0;
-                rank.score = promotion ? static_cast<int>(move.promotionType())
-                                       : capture ? capture_history_[capture_key(board, move)]
-                                                 : history_[quiet_key(board, move)];
+            }
+            case OrderingStrategy::capture_hist: {
+                if (promotion) {
+                    rank.stage = 2;
+                    rank.score = static_cast<int>(move.promotionType());
+                } else if (board.isCapture(move)) {
+                    rank.stage = 1;
+                    rank.score = capture_history_[capture_key(board, move)];
+                } else {
+                    rank.stage = 0;
+                    rank.score = history_[quiet_key(board, move)];
+                }
                 break;
-            case OrderingStrategy::mvv_lva_history:
+            }
+            case OrderingStrategy::mvv_lva_history: {
+                const bool capture = board.isCapture(move);
                 rank.stage = promotion || capture ? 1 : 0;
-                rank.score = rank.stage ? tactical_priority(board, move) : history_[quiet_key(board, move)];
+                rank.score = rank.stage ? tactical_priority(board, move, capture)
+                                        : history_[quiet_key(board, move)];
                 break;
+            }
             case OrderingStrategy::neural: break;  // The stub above always throws.
         }
     }
     std::sort(ranked.begin(), ranked.begin() + moves.size(), [](const RankedMove& left, const RankedMove& right) {
+        if (left.is_hash_move != right.is_hash_move) return left.is_hash_move;
         if (left.stage != right.stage) return left.stage > right.stage;
         if (left.score != right.score) return left.score > right.score;
         return left.index < right.index;
@@ -133,7 +157,7 @@ void MoveOrderer::order(const chess::Board& board, chess::Movelist& moves, chess
 }
 
 void MoveOrderer::on_cutoff(const chess::Board& board, chess::Move move, int depth) noexcept {
-    if (strategy_ == OrderingStrategy::captures || strategy_ == OrderingStrategy::neural) return;
+    if (strategy_ == OrderingStrategy::mvvlva || strategy_ == OrderingStrategy::neural) return;
     if (board.isCapture(move)) {
         if (strategy_ == OrderingStrategy::capture_hist) {
             auto& value = capture_history_[capture_key(board, move)];
