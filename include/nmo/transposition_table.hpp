@@ -17,6 +17,7 @@ struct TranspositionEntry {
     std::int16_t depth = -1;  // Negative depth marks an unused slot.
     Bound bound = Bound::upper;
     std::uint32_t generation = 0;
+    chess::Move best_move{chess::Move::NO_MOVE};
 };
 
 class TranspositionTable {
@@ -34,7 +35,9 @@ public:
     [[nodiscard]] const TranspositionEntry* probe(std::uint64_t key) const noexcept;
     // Replace the indexed entry unconditionally. Depth must be in [0, max_depth]
     // and mate scores must use position-relative encoding (score_to_table).
-    void store(std::uint64_t key, int depth, int score, Bound bound) noexcept;
+    // The stored best move is used as the next search's hash move.
+    void store(std::uint64_t key, int depth, int score, Bound bound,
+               chess::Move best_move = chess::Move::NO_MOVE) noexcept;
     // Number of direct-mapped entries and their storage size, excluding vector overhead.
     [[nodiscard]] std::size_t capacity() const noexcept { return buckets_.size(); }
     [[nodiscard]] std::size_t bytes() const noexcept { return buckets_.size() * sizeof(Bucket); }

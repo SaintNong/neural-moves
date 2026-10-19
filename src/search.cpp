@@ -85,9 +85,14 @@ int AlphaBetaSearcher::negamax(chess::Board& board, int depth, int alpha, int be
     // TT lookup on this node
     // attempt to avoid searching node by looking it up in TT.
     const auto key = TranspositionTable::position_key(board);
+    chess::Move hash_move = chess::Move::NO_MOVE;
     if (const auto* entry = table_.probe(key)) {
+        // TT hit.
+        // now we know the exact score and best move from last search in this position.
         ++result_.tt_hits;
+        hash_move = entry->best_move;
         if (ply != 0 && entry->depth >= depth) {
+            // Check if TT info is informative enough that we can directly return.
             const int score = score_from_table(entry->score, ply);
             if (entry->bound == Bound::exact || (entry->bound == Bound::lower && score >= beta) ||
                 (entry->bound == Bound::upper && score <= alpha)) {
@@ -98,11 +103,12 @@ int AlphaBetaSearcher::negamax(chess::Board& board, int depth, int alpha, int be
     }
 
     // Initialise our custom move orderer on this node
-    orderer_.order(board, moves);
+    orderer_.order(board, moves, hash_move);
 
     // track if alpha was beaten for TT score boundary
     const int original_alpha = alpha;
     int best_score = -infinity;
+    chess::Move best_move = chess::Move::NO_MOVE;
     for (const auto move : moves) {
         board.makeMove(move);
         const int score = -negamax(board, depth - 1, -beta, -alpha, ply + 1);
@@ -110,6 +116,7 @@ int AlphaBetaSearcher::negamax(chess::Board& board, int depth, int alpha, int be
 
         if (score > best_score) {
             best_score = score;
+            best_move = move;
             if (root_best_move != nullptr) *root_best_move = move;
         }
         alpha = std::max(alpha, score);
@@ -127,7 +134,7 @@ int AlphaBetaSearcher::negamax(chess::Board& board, int depth, int alpha, int be
     // Store resultant score of searching this node in hash table, and the boundary associated with it.
     const auto bound = best_score <= original_alpha
         ? Bound::upper : best_score >= beta ? Bound::lower : Bound::exact;
-    table_.store(key, depth, score_to_table(best_score, ply), bound);
+    table_.store(key, depth, score_to_table(best_score, ply), bound, best_move);
 
     return best_score;
 }

@@ -39,10 +39,12 @@ const TranspositionEntry* TranspositionTable::probe(std::uint64_t key) const noe
     return &entry;
 }
 
-void TranspositionTable::store(std::uint64_t key, int depth, int score, Bound bound) noexcept {
+void TranspositionTable::store(std::uint64_t key, int depth, int score, Bound bound,
+                               chess::Move best_move) noexcept {
     if (buckets_.empty())
         return;
-    buckets_[key & (buckets_.size() - 1)] = {key, score, static_cast<std::int16_t>(depth), bound, generation_};
+    buckets_[key & (buckets_.size() - 1)] = {
+        key, score, static_cast<std::int16_t>(depth), bound, generation_, best_move};
 }
 
 std::uint64_t TranspositionTable::position_key(const chess::Board& board) noexcept {

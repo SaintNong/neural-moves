@@ -17,6 +17,7 @@ constexpr int additive_history_limit = 1'000'000'000;
 
 struct RankedMove {
     chess::Move move{chess::Move::NO_MOVE};
+    bool is_hash_move = false;
     int stage = 0;
     int score = 0;
     int index = 0;
@@ -84,7 +85,7 @@ std::size_t MoveOrderer::capture_key(const chess::Board& board, chess::Move move
                                      move.to().index()) * 6 + victim);
 }
 
-void MoveOrderer::order(const chess::Board& board, chess::Movelist& moves) const {
+void MoveOrderer::order(const chess::Board& board, chess::Movelist& moves, chess::Move hash_move) const {
     if (strategy_ == OrderingStrategy::neural) {
         NeuralPolicy{}.rank(board, moves);
     }
@@ -94,6 +95,7 @@ void MoveOrderer::order(const chess::Board& board, chess::Movelist& moves) const
         const bool promotion = move.typeOf() == chess::Move::PROMOTION;
         auto& rank = ranked[static_cast<std::size_t>(index)];
         rank.move = move;
+        rank.is_hash_move = move == hash_move;
         rank.index = index;
         switch (strategy_) {
             case OrderingStrategy::captures: {
@@ -132,6 +134,7 @@ void MoveOrderer::order(const chess::Board& board, chess::Movelist& moves) const
         }
     }
     std::sort(ranked.begin(), ranked.begin() + moves.size(), [](const RankedMove& left, const RankedMove& right) {
+        if (left.is_hash_move != right.is_hash_move) return left.is_hash_move;
         if (left.stage != right.stage) return left.stage > right.stage;
         if (left.score != right.score) return left.score > right.score;
         return left.index < right.index;

@@ -25,10 +25,11 @@ public:
 
     // Select a strategy and discard all accumulated cutoff history.
     void reset(OrderingStrategy strategy) noexcept;
-    // Ties preserve generator order. Requires moves legal in board; reorders
-    // without adding or removing moves.
+    // The hash move is placed first regardless of strategy; remaining ties
+    // preserve generator order. Reorders without adding or removing moves.
     // Neural ordering throws std::logic_error (inference is unimplemented).
-    void order(const chess::Board& board, chess::Movelist& moves) const;
+    void order(const chess::Board& board, chess::Movelist& moves,
+               chess::Move hash_move = chess::Move::NO_MOVE) const;
     // Reward a legal move that caused a beta cutoff, using the board before that
     // move and remaining search depth in [1, max_depth]. Updates only the history
     // relevant to the selected strategy; captures-only ordering has no history.
