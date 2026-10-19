@@ -15,6 +15,10 @@ struct SearchOptions {
     std::size_t table_megabytes = 16;
     // Search depths 1 through the requested depth, retaining TT/history between them.
     bool iterative_deepening = true;
+    // Extend depth-zero nodes with capture and promotion searches.
+    bool quiescence = true;
+    // Prioritize a transposition-table move during move ordering.
+    bool hash_move_ordering = true;
 };
 
 struct SearchResult {
@@ -41,10 +45,10 @@ struct SearchResult {
     [[nodiscard]] double ebf() const;
 };
 
-// Fixed-horizon alpha-beta search with material-only leaf evaluation; no
-// quiescence search or extensions. Adjudicates stalemate, insufficient material
-// (see is_insufficient_material), and the automatic 75-move rule. Checkmate
-// takes precedence. Repetition and optional 50-move claims are not adjudicated.
+// Alpha-beta search with material evaluation and optional quiescence search
+// (enabled by default). Adjudicates stalemate, insufficient material (see
+// is_insufficient_material), and the automatic 75-move rule. Checkmate takes
+// precedence. Repetition and optional 50-move claims are not adjudicated.
 // Instances hold mutable search state and must not be used concurrently.
 class AlphaBetaSearcher {
 public:
@@ -62,6 +66,7 @@ public:
 private:
     int negamax(chess::Board& board, int depth, int alpha, int beta, int ply,
                 chess::Move* root_best_move = nullptr);
+    int quiescence(chess::Board& board, int alpha, int beta, int ply, bool count_node = true);
 
     SearchOptions options_;
     TranspositionTable table_;

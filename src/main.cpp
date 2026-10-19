@@ -33,6 +33,8 @@ struct Arguments {
     std::size_t table_megabytes = 16;
     std::uint64_t limit = std::numeric_limits<std::uint64_t>::max();
     bool iterative = true;
+    bool quiescence = true;
+    bool hash_move_ordering = true;
     bool csv = false;
     bool help = false;
     bool version = false;
@@ -55,6 +57,9 @@ Options:
   --tt-mb N           Transposition table memory budget, 0..4096 MiB (default: 16)
                       0 disables the table; actual allocation rounds down
   --no-iterative      Search only the requested depth
+  --no-quiescence     Disable quiescence search (enabled by default)
+  --no-hash-move-ordering
+                      Disable transposition-table move ordering (enabled by default)
   --limit N           Read at most N positions (positive)
   --csv               Print the summary as CSV
   --results FILE      Write per-position moves, scores, and statistics as CSV
@@ -102,6 +107,8 @@ Arguments parse_arguments(int argc, char** argv) {
             }
             args.strategies.push_back(strategy);
         } else if (arg == "--no-iterative") args.iterative = false;
+        else if (arg == "--no-quiescence") args.quiescence = false;
+        else if (arg == "--no-hash-move-ordering") args.hash_move_ordering = false;
         else if (arg == "--csv") args.csv = true;
         else if (arg == "train" && index == 1) nmo::NeuralPolicy{}.train();
         else if (arg.starts_with('-')) throw std::invalid_argument("unknown option: " + std::string(arg));
@@ -185,7 +192,9 @@ void print_summary(const Arguments& args, const std::vector<Totals>& totals, std
         std::cout << "strategy,positions,depth,mean_ebf,mean_nodes,total_nodes,cutoffs,tt_hits,tt_cutoffs,seconds\n";
     } else {
         std::cout << "Positions: " << count << " | depth: " << args.depth << " | iterative: "
-                  << (args.iterative ? "yes" : "no") << '\n';
+                  << (args.iterative ? "yes" : "no") << " | quiescence: "
+                  << (args.quiescence ? "yes" : "no") << " | hash-move ordering: "
+                  << (args.hash_move_ordering ? "yes" : "no") << '\n';
         std::cout << std::left << std::setw(19) << "Strategy" << std::right
                   << std::setw(11) << "Mean EBF" << std::setw(14) << "Mean nodes"
                   << std::setw(15) << "Total nodes" << std::setw(13) << "Cutoffs"
@@ -229,7 +238,8 @@ int run(const Arguments& args) {
         detailed << "position,line,fen,strategy,depth,best_move,label,score_cp,nodes,cutoffs,tt_hits,tt_cutoffs,ebf,seconds\n";
     }
 
-    nmo::AlphaBetaSearcher searcher({args.table_megabytes, args.iterative});
+    nmo::AlphaBetaSearcher searcher({args.table_megabytes, args.iterative, args.quiescence,
+                                     args.hash_move_ordering});
     std::vector<Totals> totals(args.strategies.size());
     std::uint64_t count = 0;
     std::cerr << "TT: " << searcher.table_bytes() / (1024 * 1024) << " MiB allocated; searching positions\n";

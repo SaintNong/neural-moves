@@ -60,10 +60,12 @@ SearchResult AlphaBetaSearcher::search(chess::Board board, int depth, OrderingSt
 
 int AlphaBetaSearcher::negamax(chess::Board& board, int depth, int alpha, int beta, int ply,
                               chess::Move* root_best_move) {
+    if (root_best_move != nullptr)
+        *root_best_move = chess::Move::NO_MOVE;
+
     // Non-stalemate draws
     const bool drawn = board.halfMoveClock() >= 100 || is_insufficient_material(board);
     ++result_.nodes;
-    if (root_best_move != nullptr) *root_best_move = chess::Move::NO_MOVE;
 
     //  50-move rule
     if (drawn && !board.inCheck())
@@ -79,6 +81,8 @@ int AlphaBetaSearcher::negamax(chess::Board& board, int depth, int alpha, int be
         return 0;
 
     // Leaf node
+    if (depth == 0 && options_.quiescence)
+        return quiescence(board, alpha, beta, ply, false);
     if (depth == 0)
         return evaluate_material(board);
 
@@ -90,7 +94,8 @@ int AlphaBetaSearcher::negamax(chess::Board& board, int depth, int alpha, int be
         // TT hit.
         // now we know the exact score and best move from last search in this position.
         ++result_.tt_hits;
-        hash_move = entry->best_move;
+        if (options_.hash_move_ordering)
+            hash_move = entry->best_move;
         if (ply != 0 && entry->depth >= depth) {
             // Check if TT info is informative enough that we can directly return.
             const int score = score_from_table(entry->score, ply);
@@ -135,6 +140,42 @@ int AlphaBetaSearcher::negamax(chess::Board& board, int depth, int alpha, int be
     const auto bound = best_score <= original_alpha
         ? Bound::upper : best_score >= beta ? Bound::lower : Bound::exact;
     table_.store(key, depth, score_to_table(best_score, ply), bound, best_move);
+
+    return best_score;
+}
+
+int AlphaBetaSearcher::quiescence(chess::Board& board, int alpha, int beta, int ply, bool count_node) {
+    if (count_node) ++result_.nodes;
+    if (board.halfMoveClock() >= 100 || is_insufficient_material(board))
+        return 0;
+
+    chess::Movelist moves;
+    chess::movegen::legalmoves(moves, board);
+
+    // Use the static evaluation as the stand-pat score, then search captures
+    // and promotions.
+    int best_score = evaluate_material(board);
+    if (best_score >= beta)
+        return best_score;
+    alpha = std::max(alpha, best_score);
+
+    orderer_.order(board, moves);
+    for (const auto move : moves) {
+        // Captures include en passant; promotions include quiet promotions.
+        if (!board.isCapture(move) && move.typeOf() != chess::Move::PROMOTION)
+            continue;
+
+        board.makeMove(move);
+        const int score = -quiescence(board, -beta, -alpha, ply + 1);
+        board.unmakeMove(move);
+
+        best_score = std::max(best_score, score);
+        alpha = std::max(alpha, score);
+        if (alpha >= beta) {
+            ++result_.cutoffs;
+            break;
+        }
+    }
 
     return best_score;
 }
