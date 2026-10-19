@@ -13,7 +13,6 @@ enum class Bound : std::uint8_t { exact, lower, upper };
 
 struct TranspositionEntry {
     std::uint64_t key = 0;
-    chess::Move best_move{chess::Move::NO_MOVE};
     int score = 0;
     std::int16_t depth = -1;  // An empty slot can also hold key zero.
     Bound bound = Bound::upper;
@@ -28,12 +27,11 @@ public:
 
     // Invalidate all entries while retaining the allocated storage.
     void clear() noexcept;
-    // Null on a miss. Returned entry contents may change after store/clear;
-    // callers must validate the cached move before using it for search.
+    // Null on a miss. Returned entry contents may change after store/clear.
     [[nodiscard]] const TranspositionEntry* probe(std::uint64_t key) const noexcept;
     // Depth must be in [0, max_depth]; score must use position-relative mate
     // encoding (score_to_table). Replacement may retain a stronger existing entry.
-    void store(std::uint64_t key, int depth, int score, Bound bound, chess::Move best_move) noexcept;
+    void store(std::uint64_t key, int depth, int score, Bound bound) noexcept;
     [[nodiscard]] std::size_t capacity() const noexcept { return buckets_.size() * ways; }
     [[nodiscard]] std::size_t bytes() const noexcept { return buckets_.size() * sizeof(Bucket); }
 

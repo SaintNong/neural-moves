@@ -16,7 +16,7 @@ inline constexpr std::array heuristic_strategies{
 
 [[nodiscard]] std::string_view strategy_name(OrderingStrategy strategy) noexcept;
 [[nodiscard]] OrderingStrategy parse_strategy(std::string_view name);
-[[nodiscard]] int tactical_priority(const chess::Board& board, chess::Move move) noexcept;
+[[nodiscard]] int tactical_priority(const chess::Board& board, chess::Move move, bool capture) noexcept;
 [[nodiscard]] int gravity_update(int value, int bonus, int limit) noexcept;
 
 class MoveOrderer {
@@ -25,11 +25,10 @@ public:
 
     // Select a strategy and discard all accumulated cutoff history.
     void reset(OrderingStrategy strategy) noexcept;
-    // A legal TT move has first priority for every strategy. Ties preserve generator order.
-    // Requires moves legal in board; reorders without adding/removing moves.
+    // Ties preserve generator order. Requires moves legal in board; reorders
+    // without adding or removing moves.
     // Neural ordering throws std::logic_error (inference is unimplemented).
-    void order(const chess::Board& board, chess::Movelist& moves,
-               chess::Move tt_move = chess::Move::NO_MOVE) const;
+    void order(const chess::Board& board, chess::Movelist& moves) const;
     // Reward a legal move that caused a beta cutoff, using the board before that
     // move and remaining search depth in [1, max_depth]. Updates only the history
     // relevant to the selected strategy; captures-only ordering has no history.
