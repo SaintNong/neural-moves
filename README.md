@@ -1,5 +1,7 @@
 # Neural Move Ordering
 
+[![CI](https://github.com/SaintNong/neural-moves/actions/workflows/ci.yml/badge.svg)](https://github.com/SaintNong/neural-moves/actions/workflows/ci.yml)
+
 A C++20 benchmark for comparing chess move ordering strategies using
 alpha–beta search, iterative deepening, and a transposition table. It uses
 [Disservin's chess library](https://disservin.github.io/chess-library/).
