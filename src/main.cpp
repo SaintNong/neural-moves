@@ -50,7 +50,7 @@ Blank lines and lines beginning with # are ignored.
 Options:
   --depth N           Search depth in plies, 1..64 (default: 4)
   --strategy NAME     Select a strategy; repeat to compare several (default: all)
-                      captures, history, history-gravity, capture-hist,
+                      mvv-lva, history, history-gravity, capture-hist,
                       mvv-lva-history; neural is an unimplemented stub
   --tt-mb N           Transposition table memory budget, 0..4096 MiB (default: 16)
                       0 disables the table; actual allocation rounds down

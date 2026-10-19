@@ -8,10 +8,10 @@
 
 namespace nmo {
 
-enum class OrderingStrategy { captures, history, history_gravity, capture_hist, mvv_lva_history, neural };
+enum class OrderingStrategy { mvvlva, history, history_gravity, capture_hist, mvv_lva_history, neural };
 
 inline constexpr std::array heuristic_strategies{
-    OrderingStrategy::captures, OrderingStrategy::history, OrderingStrategy::history_gravity,
+    OrderingStrategy::mvvlva, OrderingStrategy::history, OrderingStrategy::history_gravity,
     OrderingStrategy::capture_hist, OrderingStrategy::mvv_lva_history};
 
 [[nodiscard]] std::string_view strategy_name(OrderingStrategy strategy) noexcept;
@@ -21,7 +21,7 @@ inline constexpr std::array heuristic_strategies{
 
 class MoveOrderer {
 public:
-    explicit MoveOrderer(OrderingStrategy strategy = OrderingStrategy::captures) : strategy_(strategy) {}
+    explicit MoveOrderer(OrderingStrategy strategy = OrderingStrategy::mvvlva) : strategy_(strategy) {}
 
     // Select a strategy and discard all accumulated cutoff history.
     void reset(OrderingStrategy strategy) noexcept;
@@ -32,7 +32,7 @@ public:
                chess::Move hash_move = chess::Move::NO_MOVE) const;
     // Reward a legal move that caused a beta cutoff, using the board before that
     // move and remaining search depth in [1, max_depth]. Updates only the history
-    // relevant to the selected strategy; captures-only ordering has no history.
+    // relevant to the selected strategy; MVV-LVA ordering has no history.
     void on_cutoff(const chess::Board& board, chess::Move move, int depth) noexcept;
 
 private:

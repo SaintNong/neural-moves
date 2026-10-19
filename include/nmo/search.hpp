@@ -56,7 +56,7 @@ public:
     // std::logic_error because inference is unimplemented. Equally scoring
     // moves may yield different best moves under different ordering strategies.
     [[nodiscard]] SearchResult search(chess::Board board, int depth,
-                                      OrderingStrategy strategy = OrderingStrategy::captures);
+                                      OrderingStrategy strategy = OrderingStrategy::mvvlva);
     [[nodiscard]] std::size_t table_bytes() const noexcept { return table_.bytes(); }
 
 private:
