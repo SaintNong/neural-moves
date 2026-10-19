@@ -16,7 +16,7 @@ AlphaBetaSearcher::AlphaBetaSearcher(SearchOptions options) : options_(options),
 /**
  * Returns whether these are valid search starting arguments
  */
-bool validate_search_args(int depth, OrderingStrategy strategy) {
+void validate_search_args(int depth, OrderingStrategy strategy) {
     // depth must not underflow or overflow
     if (depth < 1 || depth > max_depth) {
         throw std::invalid_argument("search depth must be between 1 and 64");
