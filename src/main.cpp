@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <charconv>
 #include <chrono>
+#include <cstdio>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -21,13 +22,14 @@
 #include "nmo/ordering.hpp"
 #include "nmo/positions.hpp"
 #include "nmo/search.hpp"
+#include "run_progress.hpp"
 
 namespace {
 struct Arguments {
     std::optional<std::filesystem::path> positions;
     std::optional<std::string> fen;
     std::optional<std::filesystem::path> results;
-    int depth = 3;
+    int depth = 4;
     std::size_t table_megabytes = 16;
     std::uint64_t limit = std::numeric_limits<std::uint64_t>::max();
     bool iterative = true;
@@ -46,7 +48,7 @@ POSITIONS contains one FEN or FEN | legal_uci_move per line.
 Blank lines and lines beginning with # are ignored.
 
 Options:
-  --depth N           Search depth in plies, 1..64 (default: 3)
+  --depth N           Search depth in plies, 1..64 (default: 4)
   --strategy NAME     Select a strategy; repeat to compare several (default: all)
                       captures, history, history-gravity, capture-hist,
                       mvv-lva-history; neural is an unimplemented stub
@@ -136,6 +138,24 @@ struct Totals {
     double seconds = 0.0;
 };
 
+std::uint64_t count_positions(const std::filesystem::path& path) {
+    std::ifstream input(path);
+    if (!input) throw std::runtime_error("cannot open positions file: " + path.string());
+
+    std::uint64_t count = 0;
+    std::string line;
+    while (std::getline(input, line)) {
+        const auto first = line.find_first_not_of(" \t\r\n\f\v");
+        if (first == std::string::npos || line[first] == '#') continue;
+        if (count == std::numeric_limits<std::uint64_t>::max()) {
+            throw std::overflow_error("positions file contains too many records");
+        }
+        ++count;
+    }
+    if (input.bad()) throw std::runtime_error("failed to read positions file: " + path.string());
+    return count;
+}
+
 void csv_field(std::ostream& out, std::string_view value) {
     out << '"';
     for (const char symbol : value) {
@@ -193,8 +213,14 @@ void print_summary(const Arguments& args, const std::vector<Totals>& totals, std
 int run(const Arguments& args) {
     std::unique_ptr<nmo::PositionReader> reader;
     std::optional<nmo::Position> single_position;
-    if (args.positions) reader = std::make_unique<nmo::PositionReader>(*args.positions);
-    else single_position = nmo::parse_position(*args.fen);
+    std::uint64_t total_positions = 1;
+    if (args.positions) {
+        total_positions = std::min(count_positions(*args.positions), args.limit);
+        if (total_positions == 0) throw std::invalid_argument("positions input contains no positions");
+        reader = std::make_unique<nmo::PositionReader>(*args.positions);
+    } else {
+        single_position = nmo::parse_position(*args.fen);
+    }
 
     std::ofstream detailed;
     if (args.results) {
@@ -207,6 +233,7 @@ int run(const Arguments& args) {
     std::vector<Totals> totals(args.strategies.size());
     std::uint64_t count = 0;
     std::cerr << "TT: " << searcher.table_bytes() / (1024 * 1024) << " MiB allocated; searching positions\n";
+    RunProgress progress(total_positions);
     while (count < args.limit) {
         auto position = reader ? reader->next() : std::exchange(single_position, std::nullopt);
         if (!position) break;
@@ -230,7 +257,7 @@ int run(const Arguments& args) {
             total.seconds += seconds;
             if (args.results) write_result(detailed, count, *position, strategy, result, seconds);
         }
-        if (count % 1000 == 0) std::cerr << "Processed " << count << " positions\n";
+        progress.update(count);
     }
     if (count == 0) throw std::invalid_argument("positions input contains no positions");
     if (args.results) {

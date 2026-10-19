@@ -8,7 +8,7 @@ endif()
 
 include(CTest)
 option(NMO_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
-set(NMO_RUN_DEPTH 3 CACHE STRING "Search depth for the run target")
+set(NMO_RUN_DEPTH 4 CACHE STRING "Search depth for the run target")
 
 add_library(nmo_build_options INTERFACE)
 target_compile_features(nmo_build_options INTERFACE cxx_std_20)
@@ -31,6 +31,10 @@ add_library(chess_library INTERFACE)
 target_include_directories(chess_library SYSTEM INTERFACE
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/chess-library")
 
+add_library(indicators INTERFACE)
+target_include_directories(indicators SYSTEM INTERFACE
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/indicators/include")
+
 add_library(nmo STATIC
     src/evaluation.cpp
     src/ordering.cpp
@@ -40,8 +44,8 @@ add_library(nmo STATIC
 target_include_directories(nmo PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_link_libraries(nmo PUBLIC chess_library nmo_build_options)
 
-add_executable(neural-move-ordering src/main.cpp)
-target_link_libraries(neural-move-ordering PRIVATE nmo)
+add_executable(neural-move-ordering src/main.cpp src/run_progress.cpp)
+target_link_libraries(neural-move-ordering PRIVATE nmo indicators)
 
 add_custom_target(run
     COMMAND $<TARGET_FILE:neural-move-ordering>

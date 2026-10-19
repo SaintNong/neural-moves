@@ -9,7 +9,8 @@ Available strategies: `captures` (MVV-LVA), `history`, `history-gravity`,
 
 ## Build and run
 
-Requires a C++20 compiler, CMake 3.20+, and a build tool (Make or Ninja).
+Requires a C++20 compiler, CMake 3.20+, and a build tool (Make or Ninja). The
+indicators headers and license are in `third_party/indicators/`.
 
 ```sh
 cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release
@@ -18,7 +19,7 @@ cmake --build build/release --parallel
 # Search the starting position
 ./build/release/neural-move-ordering positions/start.fen --depth 4
 
-# Build and run the full dataset at depth 3
+# Build and run the full dataset at depth 4
 cmake --build build/release --target run
 
 # Compare selected strategies on a smaller sample
@@ -51,7 +52,9 @@ Save the summary and detailed results as CSV:
 `summary.csv` contains one aggregate row per strategy. `results.csv` contains
 one row per position and strategy, including the FEN, best UCI move, optional
 input label, score in centipawns, depth, node counts, cutoffs, EBF, and time.
-Progress messages go to stderr and do not appear in the CSV files.
+Interactive runs show one progress bar for the full dataset, with elapsed and
+estimated total time. It writes to stderr and is hidden when stderr is
+redirected.
 
 ## Development
 
