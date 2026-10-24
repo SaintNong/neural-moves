@@ -14,6 +14,8 @@ constexpr int history_limit = 7183;
 constexpr int capture_history_limit = 10692;
 constexpr int bonus_per_ply = 131;
 constexpr int additive_history_limit = 1'000'000'000;
+// Fixed-point resolution used to rank network logits as integers.
+constexpr float logit_resolution = 4096.0F;
 
 // MVV-LVA scores indexed by victim then attacker, in PieceType order:
 // pawn, knight, bishop, rook, queen, king, none.
@@ -27,13 +29,6 @@ constexpr std::array<std::array<int, 7>, 7> mvv_lva_scores{{
     {{0, 0, 0, 0, 0, 0, 0}},
 }};
 
-struct RankedMove {
-    chess::Move move{chess::Move::NO_MOVE};
-    bool is_hash_move = false;
-    int stage = 0;
-    int score = 0;
-    int index = 0;
-};
 }  // namespace
 
 std::string_view strategy_name(OrderingStrategy strategy) noexcept {
@@ -79,10 +74,37 @@ int gravity_update(int value, int bonus, int limit) noexcept {
     return value + bonus - static_cast<int>(adjustment);
 }
 
-void MoveOrderer::reset(OrderingStrategy strategy) noexcept {
+MoveOrderer::MoveOrderer(OrderingStrategy strategy) : strategy_(strategy) {}
+MoveOrderer::~MoveOrderer() = default;
+MoveOrderer::MoveOrderer(MoveOrderer&&) noexcept = default;
+MoveOrderer& MoveOrderer::operator=(MoveOrderer&&) noexcept = default;
+
+void MoveOrderer::reset(OrderingStrategy strategy, std::shared_ptr<const Policy> policy) {
+    if (strategy == OrderingStrategy::neural && !policy) {
+        throw std::logic_error("neural move ordering requires a policy network");
+    }
+    if (strategy != OrderingStrategy::neural) {
+        policy.reset();
+    }
+    if (policy != policy_) {
+        policy_state_ = policy ? policy->new_state() : nullptr;
+        policy_ = std::move(policy);
+    }
     strategy_ = strategy;
     history_.fill(0);
     capture_history_.fill(0);
+}
+
+void MoveOrderer::set_root(const chess::Board& board) {
+    if (policy_state_) policy_state_->reset(board);
+}
+
+void MoveOrderer::push(const chess::Board& before, chess::Move move, int child_depth) {
+    if (policy_state_) policy_state_->push(before, move, child_depth);
+}
+
+void MoveOrderer::pop() noexcept {
+    if (policy_state_) policy_state_->pop();
 }
 
 std::size_t MoveOrderer::quiet_key(const chess::Board& board, chess::Move move) noexcept {
@@ -97,18 +119,41 @@ std::size_t MoveOrderer::capture_key(const chess::Board& board, chess::Move move
                                      move.to().index()) * 6 + victim);
 }
 
-void MoveOrderer::order(const chess::Board& board, chess::Movelist& moves, chess::Move hash_move) const {
-    if (strategy_ == OrderingStrategy::neural) {
-        NeuralPolicy{}.rank(board, moves);
+chess::Move OrderedMoves::next() noexcept {
+    const auto first = moves_.begin() + picked_;
+    const auto last = moves_.begin() + count_;
+    if (picked_ < lazy_picks) {
+        std::iter_swap(first, std::min_element(first, last, RankedMove::before));
+    } else if (picked_ == lazy_picks) {
+        // A node that needed this many moves probably needs them all.
+        std::sort(first, last, RankedMove::before);
     }
-    std::array<RankedMove, chess::constants::MAX_MOVES> ranked{};
+    return moves_[static_cast<std::size_t>(picked_++)].move;
+}
+
+void MoveOrderer::order(const chess::Board& board, chess::Movelist& moves, chess::Move hash_move, int depth) {
+    OrderedMoves ranked;
+    rank(board, moves, ranked, hash_move, depth);
+    std::sort(ranked.moves_.begin(), ranked.moves_.begin() + ranked.count_, RankedMove::before);
+    for (int index = 0; index < moves.size(); ++index) {
+        moves[index] = ranked.moves_[static_cast<std::size_t>(index)].move;
+    }
+}
+
+void MoveOrderer::rank(const chess::Board& board, const chess::Movelist& moves, OrderedMoves& out,
+                       chess::Move hash_move, int depth) {
+    const bool network = strategy_ == OrderingStrategy::neural && (depth > 0 || policy_->quiescence);
+    std::array<float, chess::constants::MAX_MOVES> logits;  // Written only for network ordering.
+    if (network) {
+        policy_state_->evaluate(board, moves, depth, logits.data());
+    }
+    out.count_ = moves.size();
+    out.picked_ = 0;
     for (int index = 0; index < moves.size(); ++index) {
         const auto move = moves[index];
         const bool promotion = move.typeOf() == chess::Move::PROMOTION;
-        auto& rank = ranked[static_cast<std::size_t>(index)];
-        rank.move = move;
-        rank.is_hash_move = move == hash_move;
-        rank.index = index;
+        auto& rank = out.moves_[static_cast<std::size_t>(index)];
+        rank = {move, move == hash_move, 0, 0, index};
         switch (strategy_) {
             case OrderingStrategy::mvvlva: {
                 const bool capture = board.isCapture(move);
@@ -142,22 +187,27 @@ void MoveOrderer::order(const chess::Board& board, chess::Movelist& moves, chess
                                         : history_[quiet_key(board, move)];
                 break;
             }
-            case OrderingStrategy::neural: break;  // The stub above always throws.
+            case OrderingStrategy::neural: {
+                const bool capture = board.isCapture(move);
+                if (!network || (policy_->staged && (capture || promotion))) {
+                    rank.stage = network ? 1 : 0;
+                    rank.score = tactical_priority(board, move, capture);
+                    break;
+                }
+                float score = logits[static_cast<std::size_t>(index)];
+                if (policy_->history_weight != 0.0 && !promotion && !capture) {
+                    score += static_cast<float>(policy_->history_weight) * static_cast<float>(history_[quiet_key(board, move)]);
+                }
+                rank.score = static_cast<int>(score * logit_resolution);
+                break;
+            }
         }
-    }
-    std::sort(ranked.begin(), ranked.begin() + moves.size(), [](const RankedMove& left, const RankedMove& right) {
-        if (left.is_hash_move != right.is_hash_move) return left.is_hash_move;
-        if (left.stage != right.stage) return left.stage > right.stage;
-        if (left.score != right.score) return left.score > right.score;
-        return left.index < right.index;
-    });
-    for (int index = 0; index < moves.size(); ++index) {
-        moves[index] = ranked[static_cast<std::size_t>(index)].move;
     }
 }
 
 void MoveOrderer::on_cutoff(const chess::Board& board, chess::Move move, int depth) noexcept {
-    if (strategy_ == OrderingStrategy::mvvlva || strategy_ == OrderingStrategy::neural) return;
+    if (strategy_ == OrderingStrategy::mvvlva) return;
+    if (strategy_ == OrderingStrategy::neural && policy_->history_weight == 0.0) return;
     if (board.isCapture(move)) {
         if (strategy_ == OrderingStrategy::capture_hist) {
             auto& value = capture_history_[capture_key(board, move)];
@@ -167,7 +217,8 @@ void MoveOrderer::on_cutoff(const chess::Board& board, chess::Move move, int dep
     }
     if (move.typeOf() == chess::Move::PROMOTION) return;
     auto& value = history_[quiet_key(board, move)];
-    if (strategy_ == OrderingStrategy::history_gravity || strategy_ == OrderingStrategy::capture_hist) {
+    if (strategy_ == OrderingStrategy::history_gravity || strategy_ == OrderingStrategy::capture_hist ||
+        strategy_ == OrderingStrategy::neural) {
         value = gravity_update(value, bonus_per_ply * depth, history_limit);
     } else {
         value = std::min(additive_history_limit, value + depth * depth);

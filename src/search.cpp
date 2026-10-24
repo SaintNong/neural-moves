@@ -19,16 +19,21 @@ AlphaBetaSearcher::AlphaBetaSearcher(SearchOptions options) : options_(options),
 /**
  * Returns whether these are valid search starting arguments
  */
-void validate_search_args(int depth, OrderingStrategy strategy) {
+void validate_search_args(int depth) {
     // depth must not underflow or overflow
     if (depth < 1 || depth > max_depth) {
         throw std::invalid_argument("search depth must be between 1 and 64");
     }
+}
 
-    // strategy actually exists
-    if (strategy == OrderingStrategy::neural) {
-        throw std::logic_error("neural move ordering not implemented yet");
-    }
+/**
+ * Clear tables and prepare the orderer to search from this root
+ */
+void AlphaBetaSearcher::begin(const chess::Board& board, OrderingStrategy strategy) {
+    result_ = {};
+    table_.clear();
+    orderer_.reset(strategy, policy_);
+    orderer_.set_root(board);
 }
 
 /**
@@ -38,12 +43,10 @@ void validate_search_args(int depth, OrderingStrategy strategy) {
  * @param strategy
  */
 SearchResult AlphaBetaSearcher::search(chess::Board board, int depth, OrderingStrategy strategy) {
-    validate_search_args(depth, strategy);
+    validate_search_args(depth);
 
     // Clear tables for search
-    result_ = {};
-    table_.clear();
-    orderer_.reset(strategy);
+    begin(board, strategy);
 
     // Begin iterative deepening loop
     const int start_depth = options_.iterative_deepening ? 1 : depth;
@@ -59,6 +62,24 @@ SearchResult AlphaBetaSearcher::search(chess::Board board, int depth, OrderingSt
 
     result_.depth = depth;
     return result_;
+}
+
+ProbeResult AlphaBetaSearcher::probe(chess::Board board, int depth, int alpha, int beta, int ply,
+                                     OrderingStrategy strategy, bool quiescence_only) {
+    if (depth < 0 || depth > max_depth) {
+        throw std::invalid_argument("probe depth must be between 0 and 64");
+    }
+    begin(board, strategy);
+    int score = 0;
+    if (quiescence_only) {
+        score = quiescence(board, alpha, beta, ply);
+    } else {
+        const int start_depth = options_.iterative_deepening ? std::min(depth, 1) : depth;
+        for (int iteration = start_depth; iteration <= depth; ++iteration) {
+            score = negamax(board, iteration, alpha, beta, ply);
+        }
+    }
+    return {score, result_.nodes};
 }
 
 int AlphaBetaSearcher::negamax(chess::Board& board, int depth, int alpha, int beta, int ply,
@@ -110,17 +131,34 @@ int AlphaBetaSearcher::negamax(chess::Board& board, int depth, int alpha, int be
         }
     }
 
-    // Initialise our custom move orderer on this node
-    orderer_.order(board, moves, hash_move);
+    // Initialise our custom move orderer on this node. Orderers that defer to
+    // the hash move are only consulted once it fails to cut: it is searched
+    // first either way, so this skips network inference without changing the order.
+    if (observer_ != nullptr)
+        observer_->on_order(board, moves, hash_move, depth, alpha, beta, ply);
+    const bool deferred = orderer_.defers_to_hash_move() && hash_move != chess::Move::NO_MOVE &&
+                          std::find(moves.begin(), moves.end(), hash_move) != moves.end();
+    OrderedMoves ordered;
+    if (!deferred)
+        orderer_.rank(board, moves, ordered, hash_move, depth);
 
     // track if alpha was beaten for TT score boundary
     const int original_alpha = alpha;
     int best_score = -infinity;
     chess::Move best_move = chess::Move::NO_MOVE;
-    for (const auto move : moves) {
+    for (int index = 0; index < moves.size(); ++index) {
+        if (deferred && index == 1) {
+            chess::Movelist rest;
+            for (const auto other : moves)
+                if (other != hash_move) rest.add(other);
+            orderer_.rank(board, rest, ordered, chess::Move::NO_MOVE, depth);
+        }
+        const auto move = deferred && index == 0 ? hash_move : ordered.next();
+        orderer_.push(board, move, depth - 1);
         board.makeMove(move);
         const int score = -negamax(board, depth - 1, -beta, -alpha, ply + 1);
         board.unmakeMove(move);
+        orderer_.pop();
 
         if (score > best_score) {
             best_score = score;
@@ -152,8 +190,8 @@ int AlphaBetaSearcher::quiescence(chess::Board& board, int alpha, int beta, int 
     if (board.halfMoveClock() >= fifty_move_rule_halfmoves || is_insufficient_material(board))
         return 0;
 
-    chess::Movelist moves;
-    chess::movegen::legalmoves(moves, board);
+    chess::Movelist legal;
+    chess::movegen::legalmoves(legal, board);
 
     // Use the static evaluation as the stand-pat score, then search captures
     // and promotions.
@@ -162,15 +200,26 @@ int AlphaBetaSearcher::quiescence(chess::Board& board, int alpha, int beta, int 
         return best_score;
     alpha = std::max(alpha, best_score);
 
-    orderer_.order(board, moves);
-    for (const auto move : moves) {
-        // Captures include en passant; promotions include quiet promotions.
-        if (!board.isCapture(move) && move.typeOf() != chess::Move::PROMOTION)
-            continue;
+    // Captures include en passant; promotions include quiet promotions.
+    chess::Movelist moves;
+    for (const auto move : legal) {
+        if (board.isCapture(move) || move.typeOf() == chess::Move::PROMOTION)
+            moves.add(move);
+    }
+    if (moves.empty())
+        return best_score;
 
+    if (observer_ != nullptr)
+        observer_->on_order(board, moves, chess::Move::NO_MOVE, 0, alpha, beta, ply);
+    OrderedMoves ordered;
+    orderer_.rank(board, moves, ordered, chess::Move::NO_MOVE, 0);
+    for (int index = 0; index < ordered.size(); ++index) {
+        const auto move = ordered.next();
+        orderer_.push(board, move, 0);
         board.makeMove(move);
         const int score = -quiescence(board, -beta, -alpha, ply + 1);
         board.unmakeMove(move);
+        orderer_.pop();
 
         best_score = std::max(best_score, score);
         alpha = std::max(alpha, score);

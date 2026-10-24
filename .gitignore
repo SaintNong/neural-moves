@@ -2,3 +2,8 @@
 /bin/
 *.csv
 
+/training/.venv/
+/training/data/
+__pycache__/
+/networks/*.pt
+/training/runs/

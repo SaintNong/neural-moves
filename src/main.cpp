@@ -25,10 +25,22 @@
 #include "run_progress.hpp"
 
 namespace {
+#ifndef NMO_DEFAULT_NETWORK_DIR
+#define NMO_DEFAULT_NETWORK_DIR "networks"
+#endif
+
+// A strategy to compare; neural strategies also name the network they use.
+struct StrategySpec {
+    nmo::OrderingStrategy kind = nmo::OrderingStrategy::mvvlva;
+    std::string label;
+    std::shared_ptr<const nmo::Policy> policy;
+};
+
 struct Arguments {
     std::optional<std::filesystem::path> positions;
     std::optional<std::string> fen;
     std::optional<std::filesystem::path> results;
+    std::filesystem::path network_dir = NMO_DEFAULT_NETWORK_DIR;
     int depth = 4;
     std::size_t table_megabytes = 16;
     std::uint64_t limit = std::numeric_limits<std::uint64_t>::max();
@@ -38,7 +50,8 @@ struct Arguments {
     bool csv = false;
     bool help = false;
     bool version = false;
-    std::vector<nmo::OrderingStrategy> strategies;
+    std::vector<std::string> strategy_names;
+    std::vector<StrategySpec> strategies;
 };
 
 void print_help() {
@@ -51,9 +64,12 @@ Blank lines and lines beginning with # are ignored.
 
 Options:
   --depth N           Search depth in plies, 1..64 (default: 4)
-  --strategy NAME     Select a strategy; repeat to compare several (default: all)
-                      mvv-lva, history, history-gravity, capture-hist,
-                      mvv-lva-history; neural is an unimplemented stub
+  --strategy NAME     Select a strategy; repeat to compare several (default: all
+                      heuristics): mvv-lva, history, history-gravity,
+                      capture-hist, mvv-lva-history, or neural:NETWORK, where
+                      NETWORK is a .nmo file path or a name in --network-dir
+  --network-dir DIR   Directory of named networks (default: the repository's
+                      networks/ directory)
   --tt-mb N           Transposition table memory budget, 0..4096 MiB (default: 16)
                       0 disables the table; actual allocation rounds down
   --no-iterative      Search only the requested depth
@@ -67,7 +83,7 @@ Options:
   --help, -h          Show this help
   --version           Show version
 
-Neural inference and the 'train' subcommand are intentionally unimplemented.
+Networks are trained by the scripts in training/ (see training/README.md).
 )";
 }
 
@@ -101,16 +117,16 @@ Arguments parse_arguments(int argc, char** argv) {
             if (args.results) throw std::invalid_argument("--results can be specified only once");
             args.results = value();
         } else if (arg == "--strategy") {
-            const auto strategy = nmo::parse_strategy(value());
-            if (std::find(args.strategies.begin(), args.strategies.end(), strategy) != args.strategies.end()) {
+            const std::string name(value());
+            if (std::find(args.strategy_names.begin(), args.strategy_names.end(), name) != args.strategy_names.end()) {
                 throw std::invalid_argument("duplicate strategy");
             }
-            args.strategies.push_back(strategy);
-        } else if (arg == "--no-iterative") args.iterative = false;
+            args.strategy_names.push_back(name);
+        } else if (arg == "--network-dir") args.network_dir = value();
+        else if (arg == "--no-iterative") args.iterative = false;
         else if (arg == "--no-quiescence") args.quiescence = false;
         else if (arg == "--no-hash-move-ordering") args.hash_move_ordering = false;
         else if (arg == "--csv") args.csv = true;
-        else if (arg == "train" && index == 1) nmo::NeuralPolicy{}.train();
         else if (arg.starts_with('-')) throw std::invalid_argument("unknown option: " + std::string(arg));
         else {
             if (args.positions) throw std::invalid_argument("provide only one positions file");
@@ -121,11 +137,25 @@ Arguments parse_arguments(int argc, char** argv) {
     if (args.positions.has_value() == args.fen.has_value()) {
         throw std::invalid_argument("provide a positions file or --fen");
     }
-    if (args.strategies.empty()) {
-        args.strategies.assign(nmo::heuristic_strategies.begin(), nmo::heuristic_strategies.end());
+    if (args.strategy_names.empty()) {
+        for (const auto strategy : nmo::heuristic_strategies) args.strategy_names.emplace_back(nmo::strategy_name(strategy));
     }
-    if (std::find(args.strategies.begin(), args.strategies.end(), nmo::OrderingStrategy::neural) != args.strategies.end()) {
-        throw std::logic_error("neural move ordering is a stub; inference is not implemented");
+    for (const auto& name : args.strategy_names) {
+        StrategySpec spec{nmo::OrderingStrategy::neural, name, nullptr};
+        if (name.starts_with("neural:")) {
+            std::filesystem::path network = name.substr(7);
+            if (network.empty()) throw std::invalid_argument("neural strategy requires a network: neural:NETWORK");
+            if (!network.has_parent_path() && network.extension() != ".nmo") {
+                network = args.network_dir / (network.string() + ".nmo");
+            }
+            spec.policy = nmo::Policy::load(network);
+            spec.label = "neural:" + network.stem().string();
+        } else if (name == "neural") {
+            throw std::invalid_argument("neural strategy requires a network: neural:NETWORK");
+        } else {
+            spec.kind = nmo::parse_strategy(name);
+        }
+        args.strategies.push_back(std::move(spec));
     }
     if (args.results && args.positions) {
         std::error_code error;
@@ -177,10 +207,10 @@ std::string move_text(chess::Move move) {
 }
 
 void write_result(std::ostream& out, std::uint64_t index, const nmo::Position& position,
-                  nmo::OrderingStrategy strategy, const nmo::SearchResult& result, double seconds) {
+                  const StrategySpec& strategy, const nmo::SearchResult& result, double seconds) {
     out << index << ',' << position.line_number << ',';
     csv_field(out, position.fen);
-    out << ',' << nmo::strategy_name(strategy) << ',' << result.depth << ',' << move_text(result.best_move) << ',';
+    out << ',' << strategy.label << ',' << result.depth << ',' << move_text(result.best_move) << ',';
     if (position.label) out << move_text(*position.label);
     out << ',' << result.score_cp << ',' << result.nodes << ',' << result.cutoffs << ',' << result.tt_hits
         << ',' << result.tt_cutoffs << ',' << std::fixed << std::setprecision(6) << result.ebf() << ','
@@ -188,6 +218,8 @@ void write_result(std::ostream& out, std::uint64_t index, const nmo::Position& p
 }
 
 void print_summary(const Arguments& args, const std::vector<Totals>& totals, std::uint64_t count) {
+    int width = 19;
+    for (const auto& strategy : args.strategies) width = std::max(width, static_cast<int>(strategy.label.size()) + 2);
     if (args.csv) {
         std::cout << "strategy,positions,depth,mean_ebf,mean_nodes,total_nodes,cutoffs,tt_hits,tt_cutoffs,seconds\n";
     } else {
@@ -195,7 +227,7 @@ void print_summary(const Arguments& args, const std::vector<Totals>& totals, std
                   << (args.iterative ? "yes" : "no") << " | quiescence: "
                   << (args.quiescence ? "yes" : "no") << " | hash-move ordering: "
                   << (args.hash_move_ordering ? "yes" : "no") << '\n';
-        std::cout << std::left << std::setw(19) << "Strategy" << std::right
+        std::cout << std::left << std::setw(width) << "Strategy" << std::right
                   << std::setw(11) << "Mean EBF" << std::setw(14) << "Mean nodes"
                   << std::setw(15) << "Total nodes" << std::setw(13) << "Cutoffs"
                   << std::setw(13) << "TT hits" << std::setw(13) << "TT cutoffs" << std::setw(12) << "Time (s)" << '\n';
@@ -204,12 +236,12 @@ void print_summary(const Arguments& args, const std::vector<Totals>& totals, std
     for (std::size_t index = 0; index < totals.size(); ++index) {
         const auto& total = totals[index];
         if (args.csv) {
-            std::cout << nmo::strategy_name(args.strategies[index]) << ',' << count << ',' << args.depth
+            std::cout << args.strategies[index].label << ',' << count << ',' << args.depth
                       << ',' << std::fixed << std::setprecision(6) << total.ebf / divisor << ','
                       << static_cast<double>(total.nodes) / divisor << ',' << total.nodes << ',' << total.cutoffs
                       << ',' << total.tt_hits << ',' << total.tt_cutoffs << ',' << total.seconds << '\n';
         } else {
-            std::cout << std::left << std::setw(19) << nmo::strategy_name(args.strategies[index]) << std::right
+            std::cout << std::left << std::setw(width) << args.strategies[index].label << std::right
                       << std::fixed << std::setprecision(3) << std::setw(11) << total.ebf / divisor
                       << std::setprecision(1) << std::setw(14) << static_cast<double>(total.nodes) / divisor
                       << std::setw(15) << total.nodes << std::setw(13) << total.cutoffs
@@ -250,9 +282,10 @@ int run(const Arguments& args) {
         ++count;
         std::optional<int> expected_score;
         for (std::size_t index = 0; index < args.strategies.size(); ++index) {
-            const auto strategy = args.strategies[index];
+            const auto& strategy = args.strategies[index];
+            searcher.set_policy(strategy.policy);
             const auto begin = std::chrono::steady_clock::now();
-            const auto result = searcher.search(position->board, args.depth, strategy);
+            const auto result = searcher.search(position->board, args.depth, strategy.kind);
             const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count();
             if (expected_score && *expected_score != result.score_cp) {
                 throw std::logic_error("strategies disagree on the minimax score at position " + std::to_string(count));
