@@ -62,6 +62,10 @@ target_link_libraries(neural-move-ordering PRIVATE nmo indicators)
 target_compile_definitions(neural-move-ordering PRIVATE
     NMO_DEFAULT_NETWORK_DIR="${CMAKE_CURRENT_SOURCE_DIR}/networks")
 
+# Training-data generator used by the scripts in training/.
+add_executable(nmo-datagen tools/datagen.cpp)
+target_link_libraries(nmo-datagen PRIVATE nmo)
+
 add_custom_target(run
     COMMAND $<TARGET_FILE:neural-move-ordering>
         "${CMAKE_CURRENT_SOURCE_DIR}/positions/quiet-labeled-5000.fen"
