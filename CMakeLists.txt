@@ -8,6 +8,7 @@ endif()
 
 include(CTest)
 option(NMO_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+option(NMO_NATIVE "Optimize for the build machine's CPU (enables SIMD network inference)" ON)
 set(NMO_RUN_DEPTH 4 CACHE STRING "Search depth for the run target")
 
 add_library(nmo_build_options INTERFACE)
@@ -17,6 +18,9 @@ if(MSVC)
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(nmo_build_options INTERFACE
         -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+endif()
+if(NMO_NATIVE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT MSVC)
+    target_compile_options(nmo_build_options INTERFACE -march=native)
 endif()
 if(NMO_SANITIZERS)
     if(NOT CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" OR MSVC)
@@ -37,6 +41,15 @@ target_include_directories(indicators SYSTEM INTERFACE
 
 add_library(nmo STATIC
     src/evaluation.cpp
+    src/features.cpp
+    src/neural/accumulator.cpp
+    src/neural/architectures.cpp
+    src/neural/attention.cpp
+    src/neural/cnn.cpp
+    src/neural/movemap.cpp
+    src/neural/nnue_policy.cpp
+    src/neural/tactical.cpp
+    src/neural/weights.cpp
     src/ordering.cpp
     src/positions.cpp
     src/search.cpp
@@ -46,6 +59,8 @@ target_link_libraries(nmo PUBLIC chess_library nmo_build_options)
 
 add_executable(neural-move-ordering src/main.cpp src/run_progress.cpp)
 target_link_libraries(neural-move-ordering PRIVATE nmo indicators)
+target_compile_definitions(neural-move-ordering PRIVATE
+    NMO_DEFAULT_NETWORK_DIR="${CMAKE_CURRENT_SOURCE_DIR}/networks")
 
 add_custom_target(run
     COMMAND $<TARGET_FILE:neural-move-ordering>
@@ -59,6 +74,7 @@ if(BUILD_TESTING)
     add_executable(nmo-tests
         tests/main.cpp
         tests/evaluation_test.cpp
+        tests/neural_test.cpp
         tests/ordering_test.cpp
         tests/positions_test.cpp
         tests/search_test.cpp)
