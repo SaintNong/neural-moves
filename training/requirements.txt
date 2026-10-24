@@ -1,0 +1,4 @@
+# For CUDA builds of torch, add: --extra-index-url https://download.pytorch.org/whl/cu130
+numpy>=2.0
+torch>=2.5
+chess>=1.10
