@@ -65,9 +65,11 @@ Blank lines and lines beginning with # are ignored.
 Options:
   --depth N           Search depth in plies, 1..64 (default: 4)
   --strategy NAME     Select a strategy; repeat to compare several (default: all
-                      heuristics): mvv-lva, history, history-gravity,
-                      capture-hist, mvv-lva-history, or neural:NETWORK, where
-                      NETWORK is a .nmo file path or a name in --network-dir
+                      heuristics): mvv-lva, mvv-lva-history (or history),
+                      history-gravity, capture-hist, killers, cont-hist, strong,
+                      or neural:NETWORK, where NETWORK is a .nmo file path or a
+                      name in --network-dir; neural:NETWORK+ch also blends
+                      continuation history into the network's scores
   --network-dir DIR   Directory of named networks (default: the repository's
                       networks/ directory)
   --tt-mb N           Transposition table memory budget, 0..4096 MiB (default: 16)
@@ -143,13 +145,19 @@ Arguments parse_arguments(int argc, char** argv) {
     for (const auto& name : args.strategy_names) {
         StrategySpec spec{nmo::OrderingStrategy::neural, name, nullptr};
         if (name.starts_with("neural:")) {
-            std::filesystem::path network = name.substr(7);
+            // A "+ch" suffix also blends continuation history into the network's scores.
+            std::string network_name = name.substr(7);
+            const bool continuation = network_name.ends_with("+ch");
+            if (continuation) network_name.resize(network_name.size() - 3);
+            std::filesystem::path network = network_name;
             if (network.empty()) throw std::invalid_argument("neural strategy requires a network: neural:NETWORK");
             if (!network.has_parent_path() && network.extension() != ".nmo") {
                 network = args.network_dir / (network.string() + ".nmo");
             }
-            spec.policy = nmo::Policy::load(network);
-            spec.label = "neural:" + network.stem().string();
+            auto policy = nmo::Policy::load(network);
+            policy->continuation = continuation;
+            spec.policy = std::move(policy);
+            spec.label = "neural:" + network.stem().string() + (continuation ? "+ch" : "");
         } else if (name == "neural") {
             throw std::invalid_argument("neural strategy requires a network: neural:NETWORK");
         } else {
@@ -169,6 +177,7 @@ Arguments parse_arguments(int argc, char** argv) {
 struct Totals {
     std::uint64_t nodes = 0;
     std::uint64_t cutoffs = 0;
+    std::uint64_t first_move_cutoffs = 0;
     std::uint64_t tt_hits = 0;
     std::uint64_t tt_cutoffs = 0;
     double ebf = 0.0;
@@ -212,7 +221,8 @@ void write_result(std::ostream& out, std::uint64_t index, const nmo::Position& p
     csv_field(out, position.fen);
     out << ',' << strategy.label << ',' << result.depth << ',' << move_text(result.best_move) << ',';
     if (position.label) out << move_text(*position.label);
-    out << ',' << result.score_cp << ',' << result.nodes << ',' << result.cutoffs << ',' << result.tt_hits
+    out << ',' << result.score_cp << ',' << result.nodes << ',' << result.cutoffs << ',' << result.first_move_cutoffs
+        << ',' << result.tt_hits
         << ',' << result.tt_cutoffs << ',' << std::fixed << std::setprecision(6) << result.ebf() << ','
         << std::setprecision(9) << seconds << '\n';
 }
@@ -221,7 +231,8 @@ void print_summary(const Arguments& args, const std::vector<Totals>& totals, std
     int width = 19;
     for (const auto& strategy : args.strategies) width = std::max(width, static_cast<int>(strategy.label.size()) + 2);
     if (args.csv) {
-        std::cout << "strategy,positions,depth,mean_ebf,mean_nodes,total_nodes,cutoffs,tt_hits,tt_cutoffs,seconds\n";
+        std::cout << "strategy,positions,depth,mean_ebf,mean_nodes,total_nodes,cutoffs,first_move_cutoffs,tt_hits,"
+                     "tt_cutoffs,seconds\n";
     } else {
         std::cout << "Positions: " << count << " | depth: " << args.depth << " | iterative: "
                   << (args.iterative ? "yes" : "no") << " | quiescence: "
@@ -239,7 +250,7 @@ void print_summary(const Arguments& args, const std::vector<Totals>& totals, std
             std::cout << args.strategies[index].label << ',' << count << ',' << args.depth
                       << ',' << std::fixed << std::setprecision(6) << total.ebf / divisor << ','
                       << static_cast<double>(total.nodes) / divisor << ',' << total.nodes << ',' << total.cutoffs
-                      << ',' << total.tt_hits << ',' << total.tt_cutoffs << ',' << total.seconds << '\n';
+                      << ',' << total.first_move_cutoffs << ',' << total.tt_hits << ',' << total.tt_cutoffs << ',' << total.seconds << '\n';
         } else {
             std::cout << std::left << std::setw(width) << args.strategies[index].label << std::right
                       << std::fixed << std::setprecision(3) << std::setw(11) << total.ebf / divisor
@@ -267,7 +278,7 @@ int run(const Arguments& args) {
     if (args.results) {
         detailed.open(*args.results);
         if (!detailed) throw std::runtime_error("cannot open results file: " + args.results->string());
-        detailed << "position,line,fen,strategy,depth,best_move,label,score_cp,nodes,cutoffs,tt_hits,tt_cutoffs,ebf,seconds\n";
+        detailed << "position,line,fen,strategy,depth,best_move,label,score_cp,nodes,cutoffs,first_move_cutoffs,tt_hits,tt_cutoffs,ebf,seconds\n";
     }
 
     nmo::AlphaBetaSearcher searcher({args.table_megabytes, args.iterative, args.quiescence,
@@ -294,6 +305,7 @@ int run(const Arguments& args) {
             auto& total = totals[index];
             total.nodes += result.nodes;
             total.cutoffs += result.cutoffs;
+            total.first_move_cutoffs += result.first_move_cutoffs;
             total.tt_hits += result.tt_hits;
             total.tt_cutoffs += result.tt_cutoffs;
             total.ebf += result.ebf();

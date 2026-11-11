@@ -70,6 +70,9 @@ public:
     // Search captures and promotions first by MVV-LVA, as mvv-lva-history
     // does, and use the network only to order quiet moves.
     bool staged = false;
+    // Also blend one-ply continuation history into quiet-move scores, with the
+    // same weight as history. Set by the benchmark (neural:NAME+ch), not stored in files.
+    bool continuation = false;
 
     // Construct the architecture named in a weight file. Settings in the file
     // initialise history_weight, quiescence and staged. Throws

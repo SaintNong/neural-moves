@@ -120,7 +120,10 @@ int AlphaBetaSearcher::negamax(chess::Board& board, int depth, int alpha, int be
         ++result_.tt_hits;
         if (options_.hash_move_ordering)
             hash_move = entry->best_move;
-        if (ply != 0 && entry->depth >= depth) {
+        // Only entries from a search of exactly this depth may cut off: a deeper
+        // entry would give a score this search could not have found, so the
+        // root value would depend on the order in which positions were visited.
+        if (ply != 0 && entry->depth == depth) {
             // Check if TT info is informative enough that we can directly return.
             const int score = score_from_table(entry->score, ply);
             if (entry->bound == Bound::exact || (entry->bound == Bound::lower && score >= beta) ||
@@ -146,6 +149,7 @@ int AlphaBetaSearcher::negamax(chess::Board& board, int depth, int alpha, int be
     const int original_alpha = alpha;
     int best_score = -infinity;
     chess::Move best_move = chess::Move::NO_MOVE;
+    chess::Movelist failed_quiets;  // Quiet moves searched before a cutoff, for history penalties.
     for (int index = 0; index < moves.size(); ++index) {
         if (deferred && index == 1) {
             chess::Movelist rest;
@@ -170,11 +174,13 @@ int AlphaBetaSearcher::negamax(chess::Board& board, int depth, int alpha, int be
         // Beta cutoff
         if (alpha >= beta) {
             ++result_.cutoffs;
+            if (index == 0) ++result_.first_move_cutoffs;
 
             // If our orderer supports storing cutoffs, update the tables
-            orderer_.on_cutoff(board, move, depth);
+            orderer_.on_cutoff(board, move, depth, failed_quiets);
             break;
         }
+        if (!board.isCapture(move) && move.typeOf() != chess::Move::PROMOTION) failed_quiets.add(move);
     }
 
     // Store resultant score of searching this node in hash table, and the boundary associated with it.
@@ -225,6 +231,7 @@ int AlphaBetaSearcher::quiescence(chess::Board& board, int alpha, int beta, int 
         alpha = std::max(alpha, score);
         if (alpha >= beta) {
             ++result_.cutoffs;
+            if (index == 0) ++result_.first_move_cutoffs;
             break;
         }
     }

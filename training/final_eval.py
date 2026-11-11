@@ -14,7 +14,7 @@ from pathlib import Path
 
 from bench import ROOT, run
 
-HEURISTICS = ["mvv-lva", "history", "history-gravity", "capture-hist", "mvv-lva-history"]
+HEURISTICS = ["mvv-lva", "mvv-lva-history", "history-gravity", "capture-hist", "killers", "cont-hist", "strong"]
 NEURAL = ["neural:movemap", "neural:nnue-policy", "neural:sf-nnue", "neural:sf-upn", "neural:tactical",
           "neural:upn-pure", "neural:upn-max", "neural:upn"]
 SLOW = ["neural:cnn", "neural:attention"]  # Full-board networks: about 100x slower per node.

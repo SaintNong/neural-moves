@@ -35,6 +35,8 @@ struct SearchResult {
     std::uint64_t nodes = 0;  // All visits, including roots, leaves and TT hits.
     // Beta cutoffs while searching moves; excludes TT cutoffs.
     std::uint64_t cutoffs = 0;
+    // Beta cutoffs caused by the first move searched (the hash move if there was one).
+    std::uint64_t first_move_cutoffs = 0;
     // Probes with a matching transposition-table entry.
     std::uint64_t tt_hits = 0;
     // TT hits that return a score without searching children.
