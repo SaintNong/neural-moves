@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <string_view>
+#include <vector>
 
 #include <chess.hpp>
 
@@ -12,16 +13,33 @@ namespace nmo {
 class Policy;
 class PolicyState;
 
-enum class OrderingStrategy { mvvlva, history, history_gravity, capture_hist, mvv_lva_history, neural };
+// Every heuristic orders captures and promotions ahead of quiet moves, by MVV-LVA
+// unless it has its own capture ordering, so the heuristics differ only in what
+// they add on top. "history" is accepted as another name for mvv-lva-history.
+//   mvv-lva          captures by MVV-LVA, quiet moves in generator order
+//   mvv-lva-history  + quiet moves by the additive history heuristic (Schaeffer)
+//   history-gravity  + gravity history with a penalty for quiet moves that failed to cut
+//   capture-hist     + captures by victim value plus capture history
+//   killers          history-gravity + two killer moves per ply
+//   cont-hist        killers + one-ply continuation history added to quiet scores
+//   strong           cont-hist + capture history, with losing captures (SEE < 0) last
+enum class OrderingStrategy {
+    mvvlva, mvv_lva_history, history_gravity, capture_hist, killers, cont_hist, strong, neural
+};
 
 inline constexpr std::array heuristic_strategies{
-    OrderingStrategy::mvvlva, OrderingStrategy::history, OrderingStrategy::history_gravity,
-    OrderingStrategy::capture_hist, OrderingStrategy::mvv_lva_history};
+    OrderingStrategy::mvvlva, OrderingStrategy::mvv_lva_history, OrderingStrategy::history_gravity,
+    OrderingStrategy::capture_hist, OrderingStrategy::killers, OrderingStrategy::cont_hist,
+    OrderingStrategy::strong};
 
 [[nodiscard]] std::string_view strategy_name(OrderingStrategy strategy) noexcept;
 [[nodiscard]] OrderingStrategy parse_strategy(std::string_view name);
 [[nodiscard]] int tactical_priority(const chess::Board& board, chess::Move move, bool capture) noexcept;
 [[nodiscard]] int gravity_update(int value, int bonus, int limit) noexcept;
+// Static exchange evaluation: the material the side to move gains by making this
+// capture and then trading off on the destination square with least valuable
+// attackers first. Ignores pins and checks.
+[[nodiscard]] int static_exchange(const chess::Board& board, chess::Move move) noexcept;
 
 // A move with its ordering keys. Moves are searched by: hash move first, then
 // higher stage, then higher score, then generator order (index).
@@ -91,7 +109,10 @@ public:
     // Reward a legal move that caused a beta cutoff, using the board before that
     // move and remaining search depth in [1, max_depth]. Updates only the history
     // relevant to the selected strategy; MVV-LVA ordering has no history.
-    void on_cutoff(const chess::Board& board, chess::Move move, int depth) noexcept;
+    // Quiet moves searched at this node before the cutoff are penalised by the
+    // strategies that use a malus.
+    void on_cutoff(const chess::Board& board, chess::Move move, int depth,
+                   const chess::Movelist& failed_quiets = {}) noexcept;
 
 private:
     [[nodiscard]] static std::size_t quiet_key(const chess::Board& board, chess::Move move) noexcept;
@@ -102,6 +123,15 @@ private:
     std::unique_ptr<PolicyState> policy_state_;
     std::array<int, 2 * 64 * 64> history_{};
     std::array<int, 2 * 6 * 64 * 6> capture_history_{};
+    // Moved piece and destination of each move on the current path, for
+    // continuation history; its size is the current ply.
+    struct PathMove { int piece; int to; };
+    std::vector<PathMove> path_;
+    std::array<std::array<chess::Move, 2>, 128> killers_{};
+    // Indexed by previous (piece, to) then current (piece, to); 12 pieces x 64 squares.
+    std::vector<int> continuation_history_ = std::vector<int>(12 * 64 * 12 * 64, 0);
+    [[nodiscard]] int continuation(const chess::Board& board, chess::Move move) const noexcept;
+    [[nodiscard]] bool uses_continuation() const noexcept;
 };
 
 }  // namespace nmo
